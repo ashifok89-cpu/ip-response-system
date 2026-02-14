@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>IP Inquiry Response System</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -15,9 +16,10 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 .hdr-logo{width:38px;height:38px;border-radius:8px;background:var(--acc);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Playfair Display',serif;font-size:17px;font-weight:700}
 .hdr h1{font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#f0ede8;margin:0}
 .hdr-sub{font-size:11px;color:var(--ink3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;margin-top:2px}
-.hdr-right{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink3)}
+.hdr-right{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--ink3)}
+.hdr-stat{display:flex;align-items:center;gap:5px}
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.dot-ok{background:var(--ok)}.dot-off{background:var(--err)}
+.dot-ok{background:var(--ok)}.dot-off{background:var(--err)}.dot-warn{background:#d4a017}
 .tabs{border-bottom:1px solid var(--bdr);background:var(--wh);padding:0 32px;display:flex;gap:4px}
 .tab{padding:13px 20px;border:none;background:none;cursor:pointer;font-family:inherit;font-size:13.5px;font-weight:500;color:var(--ink3);border-bottom:2px solid transparent;transition:.2s;display:flex;align-items:center;gap:7px}
 .tab:hover{color:var(--ink2)}.tab.on{font-weight:700;color:var(--ink);border-bottom-color:var(--acc)}
@@ -36,6 +38,7 @@ body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:v
 .btn-s{background:var(--bg2);color:var(--ink2);border:1px solid var(--bdr)}
 .btn-d{background:var(--errb);color:var(--err)}
 .btn-g{background:transparent;color:var(--ink3);padding:6px 12px}
+.btn-ok{background:var(--ok);color:#fff}
 .btn-sm{padding:6px 13px;font-size:12px}
 .btn-lg{padding:13px 24px;font-size:15px}
 .btn-bl{width:100%;justify-content:center}
@@ -83,6 +86,9 @@ textarea{resize:vertical;line-height:1.7}
 .ss-i{display:flex;gap:10px;align-items:flex-start;margin-bottom:10px}
 .ss-n{width:24px;height:24px;border-radius:50%;background:var(--acc);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .ss-t{font-size:13px;color:var(--ink2);line-height:1.5}.ss-t a{color:var(--acc);font-weight:600}
+.db-ok{background:var(--okb);border:1px solid #b8dcc8;border-radius:var(--rs);padding:12px 16px;font-size:13px;color:var(--ok);display:flex;align-items:center;gap:8px}
+.db-off{background:var(--errb);border:1px solid #f0b8b9;border-radius:var(--rs);padding:12px 16px;font-size:13px;color:var(--err);display:flex;align-items:center;gap:8px}
+.db-warn{background:#fef9e7;border:1px solid #f0d98a;border-radius:var(--rs);padding:12px 16px;font-size:13px;color:#856404;display:flex;align-items:center;gap:8px}
 @media(max-width:900px){.g2{grid-template-columns:1fr}.wrap{padding:16px}.hdr{padding:16px}.tabs{padding:0 16px;overflow-x:auto}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fsi{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
@@ -102,25 +108,113 @@ var TOPICS = ["Assignment/Transfer","Renewal","New Filing/Application","Oppositi
 var CATEGORIES = ["Asian","GCC","Europe","US","Local - US","Local - Europe","Local - Asian"];
 var CAT_COLORS = {"Asian":"#7c3aed","GCC":"#0e7490","Europe":"#1d4ed8","US":"#b91c1c","Local - US":"#9f1239","Local - Europe":"#4338ca","Local - Asian":"#6d28d9"};
 
+var db = null; // Supabase client
+var dbOk = false;
+
 var S = {
-  tab:"generate", entries:[], settings:{firmName:"",toneNotes:"",greeting:"Dear Colleagues,",apiKey:"",model:"claude-haiku-4-5-20251001"},
+  tab:"generate", entries:[], settings:{firmName:"",toneNotes:"",greeting:"Dear Colleagues,",apiKey:"",model:"claude-haiku-4-5-20251001",sbUrl:"",sbKey:""},
   inquiry:"", inquiryHtml:"", addNotes:"", clientCat:"",
   response:"", generating:false, genErr:"", copied:false,
   search:"", fJuris:"", fTopic:"", fCat:"",
   showForm:false, editId:null, expId:null,
   fInqH:"", fResH:"", fJuris2:"", fTopics:[], fNotes:"", fCat2:"",
-  notif:null, showKey:false
+  notif:null, showKey:false, dbLoading:false
 };
 
-// Storage
-function load(){
-  try{ var e=localStorage.getItem("ip-kb-entries"); if(e) S.entries=JSON.parse(e); }catch(x){}
+// ===== STORAGE =====
+function loadSettings(){
   try{ var s=localStorage.getItem("ip-kb-settings"); if(s){ var p=JSON.parse(s); for(var k in p) S.settings[k]=p[k]; } }catch(x){}
 }
-function saveE(){ try{localStorage.setItem("ip-kb-entries",JSON.stringify(S.entries))}catch(x){} }
 function saveS(){ try{localStorage.setItem("ip-kb-settings",JSON.stringify(S.settings))}catch(x){} }
 
-// Util
+// Supabase DB
+function initDB(){
+  if(!S.settings.sbUrl || !S.settings.sbKey) { dbOk=false; db=null; return; }
+  try{
+    db = window.supabase.createClient(S.settings.sbUrl.trim(), S.settings.sbKey.trim());
+    dbOk = true;
+  }catch(e){ dbOk=false; db=null; }
+}
+
+async function loadEntries(){
+  if(!db){ 
+    try{ var e=localStorage.getItem("ip-kb-entries"); if(e) S.entries=JSON.parse(e); }catch(x){}
+    return;
+  }
+  S.dbLoading=true; render();
+  try{
+    var res = await db.from("entries").select("*").order("created_at",{ascending:false});
+    if(res.error) throw res.error;
+    S.entries = (res.data||[]).map(function(r){
+      return {id:r.id, inquiry:r.inquiry, response:r.response, jurisdiction:r.jurisdiction||"",
+        topics:(r.topics||"").split(",").map(function(s){return s.trim()}).filter(Boolean),
+        clientCat:r.client_cat||"", notes:r.notes||"", date:r.date_added||""};
+    });
+  }catch(e){
+    notify("DB load failed: "+e.message,true);
+    try{ var e2=localStorage.getItem("ip-kb-entries"); if(e2) S.entries=JSON.parse(e2); }catch(x){}
+  }
+  S.dbLoading=false;
+}
+
+async function dbInsert(entry){
+  if(!db){ localStorage.setItem("ip-kb-entries",JSON.stringify(S.entries)); return; }
+  try{
+    var row = {id:entry.id, inquiry:entry.inquiry, response:entry.response, jurisdiction:entry.jurisdiction||"",
+      topics:(entry.topics||[]).join(", "), client_cat:entry.clientCat||"", notes:entry.notes||"", date_added:entry.date||""};
+    var res = await db.from("entries").insert(row);
+    if(res.error) throw res.error;
+  }catch(e){ notify("Save failed: "+e.message,true); }
+}
+
+async function dbUpdate(entry){
+  if(!db){ localStorage.setItem("ip-kb-entries",JSON.stringify(S.entries)); return; }
+  try{
+    var row = {inquiry:entry.inquiry, response:entry.response, jurisdiction:entry.jurisdiction||"",
+      topics:(entry.topics||[]).join(", "), client_cat:entry.clientCat||"", notes:entry.notes||"", date_added:entry.date||""};
+    var res = await db.from("entries").update(row).eq("id",entry.id);
+    if(res.error) throw res.error;
+  }catch(e){ notify("Update failed: "+e.message,true); }
+}
+
+async function dbDelete(id){
+  if(!db){ localStorage.setItem("ip-kb-entries",JSON.stringify(S.entries)); return; }
+  try{
+    var res = await db.from("entries").delete().eq("id",id);
+    if(res.error) throw res.error;
+  }catch(e){ notify("Delete failed: "+e.message,true); }
+}
+
+async function dbBulkInsert(entries){
+  if(!db){ localStorage.setItem("ip-kb-entries",JSON.stringify(S.entries)); return; }
+  try{
+    var rows = entries.map(function(entry){
+      return {id:entry.id, inquiry:entry.inquiry, response:entry.response, jurisdiction:entry.jurisdiction||"",
+        topics:(entry.topics||[]).join(", "), client_cat:entry.clientCat||"", notes:entry.notes||"", date_added:entry.date||""};
+    });
+    var res = await db.from("entries").insert(rows);
+    if(res.error) throw res.error;
+  }catch(e){ notify("Bulk save failed: "+e.message,true); }
+}
+
+async function dbClearAll(){
+  if(!db){ S.entries=[]; localStorage.setItem("ip-kb-entries","[]"); return; }
+  try{
+    var res = await db.from("entries").delete().neq("id","");
+    if(res.error) throw res.error;
+    S.entries=[];
+  }catch(e){ notify("Clear failed: "+e.message,true); }
+}
+
+async function testConnection(){
+  if(!db) return false;
+  try{
+    var res = await db.from("entries").select("id").limit(1);
+    return !res.error;
+  }catch(e){ return false; }
+}
+
+// ===== UTIL =====
 function notify(msg,isErr){
   S.notif={m:msg,e:!!isErr}; render();
   setTimeout(function(){ S.notif=null; render(); },3000);
@@ -128,569 +222,286 @@ function notify(msg,isErr){
 function esc(s){ return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function strip(h){ var d=document.createElement("div"); d.innerHTML=h; return d.textContent||""; }
 function gid(){ return "e"+Date.now()+Math.random().toString(36).slice(2,6); }
-
-function detectJ(t){
-  var lo=t.toLowerCase();
-  for(var i=0;i<JURISDICTIONS.length;i++) if(lo.indexOf(JURISDICTIONS[i].toLowerCase())>=0) return JURISDICTIONS[i];
-  return "";
-}
-function detectT(t){
-  var lo=t.toLowerCase();
-  return TOPICS.filter(function(tp){
-    return tp.toLowerCase().split(/[\s\/]+/).some(function(w){ return w.length>3 && lo.indexOf(w)>=0; });
-  });
-}
-function scoreRel(entry,text){
-  var s=0, lo=text.toLowerCase();
-  if(entry.jurisdiction && lo.indexOf(entry.jurisdiction.toLowerCase())>=0) s+=15;
-  if(entry.clientCat && entry.clientCat===S.clientCat) s+=12;
-  (entry.topics||[]).forEach(function(t){
-    t.toLowerCase().split(/[\s\/]+/).forEach(function(w){ if(w.length>3 && lo.indexOf(w)>=0) s+=6; });
-  });
-  return s;
-}
+function detectJ(t){var lo=t.toLowerCase();for(var i=0;i<JURISDICTIONS.length;i++)if(lo.indexOf(JURISDICTIONS[i].toLowerCase())>=0)return JURISDICTIONS[i];return""}
+function detectT(t){var lo=t.toLowerCase();return TOPICS.filter(function(tp){return tp.toLowerCase().split(/[\s\/]+/).some(function(w){return w.length>3&&lo.indexOf(w)>=0})})}
+function scoreRel(entry,text){var s=0,lo=text.toLowerCase();if(entry.jurisdiction&&lo.indexOf(entry.jurisdiction.toLowerCase())>=0)s+=15;if(entry.clientCat&&entry.clientCat===S.clientCat)s+=12;(entry.topics||[]).forEach(function(t){t.toLowerCase().split(/[\s\/]+/).forEach(function(w){if(w.length>3&&lo.indexOf(w)>=0)s+=6})});return s}
 
 function html2text(html){
-  if(!html) return "";
-  var d=document.createElement("div"); d.innerHTML=html;
-  d.querySelectorAll("table").forEach(function(tbl){
-    var md="\n";
-    tbl.querySelectorAll("tr").forEach(function(tr,ri){
-      var cells=[]; tr.querySelectorAll("th,td").forEach(function(c){ cells.push(c.textContent.trim()); });
-      md+="| "+cells.join(" | ")+" |\n";
-      if(ri===0) md+="| "+cells.map(function(){return"---"}).join(" | ")+" |\n";
-    });
-    var tn=document.createTextNode(md); tbl.parentNode.replaceChild(tn,tbl);
-  });
-  d.querySelectorAll("br").forEach(function(b){ var tn=document.createTextNode("\n"); b.parentNode.replaceChild(tn,b); });
-  d.querySelectorAll("p,div,li").forEach(function(el){ el.appendChild(document.createTextNode("\n")); });
+  if(!html)return"";var d=document.createElement("div");d.innerHTML=html;
+  d.querySelectorAll("table").forEach(function(tbl){var md="\n";tbl.querySelectorAll("tr").forEach(function(tr,ri){var cells=[];tr.querySelectorAll("th,td").forEach(function(c){cells.push(c.textContent.trim())});md+="| "+cells.join(" | ")+" |\n";if(ri===0)md+="| "+cells.map(function(){return"---"}).join(" | ")+" |\n"});var tn=document.createTextNode(md);tbl.parentNode.replaceChild(tn,tbl)});
+  d.querySelectorAll("br").forEach(function(b){var tn=document.createTextNode("\n");b.parentNode.replaceChild(tn,b)});
+  d.querySelectorAll("p,div,li").forEach(function(el){el.appendChild(document.createTextNode("\n"))});
   return d.textContent.replace(/\n{3,}/g,"\n\n").trim();
 }
-
 function renderFmt(text){
-  if(!text) return "";
-  var h=esc(text).replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/\*(.*?)\*/g,"<em>$1</em>");
-  var lines=h.split("\n"), res=[], inT=false, tR=[];
-  for(var i=0;i<lines.length;i++){
-    var tr=lines[i].trim();
-    if(tr.charAt(0)==="|" && tr.charAt(tr.length-1)==="|"){
-      if(!inT){inT=true;tR=[];}
-      if(!/^\|[\s\-:|]+\|$/.test(tr)) tR.push(tr);
-    } else {
-      if(inT){ res.push(mkTbl(tR)); inT=false; }
-      res.push(tr===""?"<br>":"<p>"+tr+"</p>");
-    }
-  }
-  if(inT) res.push(mkTbl(tR));
-  return res.join("");
+  if(!text)return"";var h=esc(text).replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/\*(.*?)\*/g,"<em>$1</em>");
+  var lines=h.split("\n"),res=[],inT=false,tR=[];
+  for(var i=0;i<lines.length;i++){var tr=lines[i].trim();if(tr.charAt(0)==="|"&&tr.charAt(tr.length-1)==="|"){if(!inT){inT=true;tR=[]}if(!/^\|[\s\-:|]+\|$/.test(tr))tR.push(tr)}else{if(inT){res.push(mkTbl(tR));inT=false}res.push(tr===""?"<br>":"<p>"+tr+"</p>")}}
+  if(inT)res.push(mkTbl(tR));return res.join("");
 }
-function mkTbl(rows){
-  if(!rows.length) return "";
-  var h="<table>";
-  rows.forEach(function(r,i){
-    var cells=r.split("|").slice(1,-1).map(function(c){return c.trim();});
-    var tag=i===0?"th":"td";
-    h+="<tr>"+cells.map(function(c){return "<"+tag+">"+c+"</"+tag+">";}).join("")+"</tr>";
-  });
-  return h+"</table>";
-}
+function mkTbl(rows){if(!rows.length)return"";var h="<table>";rows.forEach(function(r,i){var cells=r.split("|").slice(1,-1).map(function(c){return c.trim()});var tag=i===0?"th":"td";h+="<tr>"+cells.map(function(c){return"<"+tag+">"+c+"</"+tag+">"}).join("")+"</tr>"});return h+"</table>"}
+function catBadge(c){if(!c)return"";var col=CAT_COLORS[c]||"#666";return '<span class="badge" style="background:'+col+'18;color:'+col+';border:1px solid '+col+'44">'+esc(c)+"</span>"}
 
-function catBadge(c){
-  if(!c) return "";
-  var col=CAT_COLORS[c]||"#666";
-  return '<span class="badge" style="background:'+col+'18;color:'+col+';border:1px solid '+col+'44">'+esc(c)+'</span>';
-}
-
-// Excel
-function doImport(file){
+// ===== EXCEL =====
+async function doImport(file){
   var reader=new FileReader();
-  reader.onload=function(ev){
+  reader.onload=async function(ev){
     try{
-      var wb=XLSX.read(ev.target.result,{type:"array"});
-      var ws=wb.Sheets[wb.SheetNames[0]];
-      var data=XLSX.utils.sheet_to_json(ws,{defval:""});
-      var n=0, exist={}; S.entries.forEach(function(e){ exist[strip(e.inquiry).substring(0,80)]=1; });
+      var wb=XLSX.read(ev.target.result,{type:"array"});var ws=wb.Sheets[wb.SheetNames[0]];
+      var data=XLSX.utils.sheet_to_json(ws,{defval:""});var n=0;var newEntries=[];
+      var exist={};S.entries.forEach(function(e){exist[strip(e.inquiry).substring(0,80)]=1});
       data.forEach(function(row){
         var inq=String(row.Inquiry||row.inquiry||row.INQUIRY||"").trim();
         var res=String(row.Response||row.response||row.RESPONSE||"").trim();
-        if(!inq||!res) return;
-        if(exist[inq.substring(0,80)]) return;
-        S.entries.push({
-          id:gid(), inquiry:esc(inq).replace(/\n/g,"<br>"), response:esc(res).replace(/\n/g,"<br>"),
+        if(!inq||!res)return;if(exist[inq.substring(0,80)])return;
+        var entry={id:gid(),inquiry:esc(inq).replace(/\n/g,"<br>"),response:esc(res).replace(/\n/g,"<br>"),
           jurisdiction:String(row.Jurisdiction||row.jurisdiction||"").trim()||detectJ(inq),
           topics:String(row.Topics||row.topics||"").split(",").map(function(s){return s.trim()}).filter(Boolean),
           clientCat:String(row["Client Category"]||row.Category||row.clientCategory||"").trim(),
           notes:String(row.Notes||row.notes||"").trim(),
-          date:String(row.Date||row.date||new Date().toISOString().slice(0,10)).trim()
-        });
-        n++;
+          date:String(row.Date||row.date||new Date().toISOString().slice(0,10)).trim()};
+        S.entries.push(entry);newEntries.push(entry);n++;
       });
-      saveE(); notify("Imported "+n+" entries ("+(data.length-n)+" skipped)"); render();
-    }catch(e){ notify("Import failed: "+e.message,true); }
-  };
-  reader.readAsArrayBuffer(file);
+      if(newEntries.length) await dbBulkInsert(newEntries);
+      notify("Imported "+n+" entries ("+(data.length-n)+" skipped)");render();
+    }catch(err){notify("Import failed: "+err.message,true)}
+  };reader.readAsArrayBuffer(file);
 }
 function doExport(){
-  var data=S.entries.map(function(e){
-    return {"Inquiry":strip(e.inquiry),"Response":strip(e.response),"Jurisdiction":e.jurisdiction||"","Topics":(e.topics||[]).join(", "),"Client Category":e.clientCat||"","Notes":e.notes||"","Date":e.date||""};
-  });
-  var ws=XLSX.utils.json_to_sheet(data);
-  ws["!cols"]=[{wch:60},{wch:80},{wch:18},{wch:30},{wch:18},{wch:30},{wch:12}];
-  var wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Knowledge Base");
-  XLSX.writeFile(wb,"IP_Knowledge_Base.xlsx"); notify("Exported as Excel");
+  var data=S.entries.map(function(e){return{"Inquiry":strip(e.inquiry),"Response":strip(e.response),"Jurisdiction":e.jurisdiction||"","Topics":(e.topics||[]).join(", "),"Client Category":e.clientCat||"","Notes":e.notes||"","Date":e.date||""}});
+  var ws=XLSX.utils.json_to_sheet(data);ws["!cols"]=[{wch:60},{wch:80},{wch:18},{wch:30},{wch:18},{wch:30},{wch:12}];
+  var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Knowledge Base");XLSX.writeFile(wb,"IP_Knowledge_Base.xlsx");notify("Exported");
 }
 function doTemplate(){
   var data=[{"Inquiry":"Example inquiry...","Response":"Example response with fees...","Jurisdiction":"UAE","Topics":"Renewal","Client Category":"GCC","Notes":"","Date":"2025-01-15"}];
-  var ws=XLSX.utils.json_to_sheet(data);
-  ws["!cols"]=[{wch:60},{wch:80},{wch:18},{wch:30},{wch:18},{wch:30},{wch:12}];
-  var wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Knowledge Base");
-  XLSX.writeFile(wb,"IP_KB_Template.xlsx"); notify("Template downloaded");
+  var ws=XLSX.utils.json_to_sheet(data);ws["!cols"]=[{wch:60},{wch:80},{wch:18},{wch:30},{wch:18},{wch:30},{wch:12}];
+  var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Knowledge Base");XLSX.writeFile(wb,"IP_KB_Template.xlsx");notify("Template downloaded");
 }
 
-// AI
+// ===== AI =====
 async function doGenerate(){
-  if(!S.inquiryHtml.trim()){ notify("Paste an inquiry first",true); return; }
-  if(!S.settings.apiKey.trim()){ notify("Set Claude API key in Settings first",true); S.tab="settings"; render(); return; }
-  S.generating=true; S.genErr=""; S.response=""; render();
-
+  if(!S.inquiryHtml.trim()){notify("Paste an inquiry first",true);return}
+  if(!S.settings.apiKey.trim()){notify("Set Claude API key in Settings first",true);S.tab="settings";render();return}
+  S.generating=true;S.genErr="";S.response="";render();
   var iqText=html2text(S.inquiryHtml);
-  var scored=S.entries.map(function(e){ return {e:e,s:scoreRel(e,iqText)}; }).sort(function(a,b){return b.s-a.s}).filter(function(x){return x.s>0}).slice(0,5);
-
+  var scored=S.entries.map(function(e){return{e:e,s:scoreRel(e,iqText)}}).sort(function(a,b){return b.s-a.s}).filter(function(x){return x.s>0}).slice(0,5);
   var examples="";
-  if(scored.length){
-    examples="Relevant past examples from our knowledge base (match their tone, format, fees):\n\n";
-    scored.forEach(function(x,i){
-      examples+="--- EXAMPLE "+(i+1)+" (Jurisdiction: "+(x.e.jurisdiction||"N/A")+", Category: "+(x.e.clientCat||"N/A")+") ---\nINQUIRY:\n"+html2text(x.e.inquiry).slice(0,1500)+"\n\nRESPONSE:\n"+html2text(x.e.response).slice(0,2500)+"\n\n";
-    });
-  }
-
-  var catNote=S.clientCat ? '\nCRITICAL: Client is "'+S.clientCat+'" pricing category. Adjust all fees for this category. If examples show different category, scale accordingly.\n' : "";
-
-  var prompt="You are an experienced IP attorney assistant. Draft a professional response email.\n\n"
-    +(S.settings.firmName ? 'Firm: "'+S.settings.firmName+'".\n' : "")
-    +(S.settings.toneNotes ? "Tone: "+S.settings.toneNotes+"\n" : "")
-    +"\nGuidelines:\n- Answer each question specifically and thoroughly\n- Include fee schedules as markdown tables (| col | format |)\n- Professional formal tone for international IP correspondence\n- Number answers matching inquiry questions\n- Caveats about government fees subject to change\n- Include timelines, document requirements, procedural steps\n- Specific about notarization, legalization, signatures if asked\n- Professional closing\n"
-    +catNote+"\n"+examples
-    +"\n--- NEW INQUIRY ---\n"+iqText+"\n"
-    +(S.addNotes ? "\nAdditional instructions: "+S.addNotes+"\n" : "")
-    +(S.clientCat ? "Client Category: "+S.clientCat+"\n" : "")
-    +"\nDraft a complete professional response. Present fees in markdown tables if applicable.";
-
+  if(scored.length){examples="Relevant past examples from our knowledge base (match their tone, format, fees):\n\n";scored.forEach(function(x,i){examples+="--- EXAMPLE "+(i+1)+" (Jurisdiction: "+(x.e.jurisdiction||"N/A")+", Category: "+(x.e.clientCat||"N/A")+") ---\nINQUIRY:\n"+html2text(x.e.inquiry).slice(0,1500)+"\n\nRESPONSE:\n"+html2text(x.e.response).slice(0,2500)+"\n\n"})}
+  var catNote=S.clientCat?'\nCRITICAL: Client is "'+S.clientCat+'" pricing category. Adjust all fees for this category.\n':"";
+  var prompt="You are an experienced IP attorney assistant. Draft a professional response email.\n\n"+(S.settings.firmName?'Firm: "'+S.settings.firmName+'".\n':"")+(S.settings.toneNotes?"Tone: "+S.settings.toneNotes+"\n":"")+"\nGuidelines:\n- Answer each question specifically and thoroughly\n- Include fee schedules as markdown tables (| col | format |)\n- Professional formal tone for international IP correspondence\n- Number answers matching inquiry questions\n- Caveats about government fees subject to change\n- Include timelines, document requirements, procedural steps\n- Specific about notarization, legalization, signatures if asked\n- Professional closing\n"+catNote+"\n"+examples+"\n--- NEW INQUIRY ---\n"+iqText+"\n"+(S.addNotes?"\nAdditional instructions: "+S.addNotes+"\n":"")+(S.clientCat?"Client Category: "+S.clientCat+"\n":"")+"\nDraft a complete professional response. Present fees in markdown tables if applicable.";
   try{
-    var url="https://api.anthropic.com/v1/messages";
-    var res=await fetch(url,{
-      method:"POST",
-      headers:{
-        "Content-Type":"application/json",
-        "x-api-key":S.settings.apiKey.trim(),
-        "anthropic-version":"2023-06-01",
-        "anthropic-dangerous-direct-browser-access":"true"
-      },
-      body:JSON.stringify({
-        model:S.settings.model,
-        max_tokens:4096,
-        messages:[{role:"user",content:prompt}]
-      })
-    });
-    if(!res.ok){ var ed=await res.json().catch(function(){return{}}); throw new Error((ed.error&&ed.error.message)||"API error "+res.status); }
-    var data=await res.json();
-    var text="";
-    if(data.content){
-      data.content.forEach(function(b){ if(b.type==="text") text+=b.text; });
-    }
-    if(!text) throw new Error("Empty response from API");
-    S.response=text;
-  }catch(e){ S.genErr=e.message||"Generation failed"; }
-  S.generating=false; render();
+    var res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":S.settings.apiKey.trim(),"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:S.settings.model,max_tokens:4096,messages:[{role:"user",content:prompt}]})});
+    if(!res.ok){var ed=await res.json().catch(function(){return{}});throw new Error((ed.error&&ed.error.message)||"API error "+res.status)}
+    var data=await res.json();var text="";if(data.content){data.content.forEach(function(b){if(b.type==="text")text+=b.text})}
+    if(!text)throw new Error("Empty response from API");S.response=text;
+  }catch(e){S.genErr=e.message||"Generation failed"}
+  S.generating=false;render();
 }
+function doCopy(){if(!S.response)return;try{navigator.clipboard.writeText(S.response);S.copied=true;render();setTimeout(function(){S.copied=false;render()},2000)}catch(e){var ta=document.createElement("textarea");ta.value=S.response;document.body.appendChild(ta);ta.select();document.execCommand("copy");document.body.removeChild(ta);S.copied=true;render();setTimeout(function(){S.copied=false;render()},2000)}}
 
-function doCopy(){
-  if(!S.response) return;
-  try{
-    navigator.clipboard.writeText(S.response);
-    S.copied=true; render(); setTimeout(function(){ S.copied=false; render(); },2000);
-  }catch(e){
-    var ta=document.createElement("textarea"); ta.value=S.response;
-    document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
-    S.copied=true; render(); setTimeout(function(){ S.copied=false; render(); },2000);
-  }
-}
-
-// KB ops
-function resetForm(){ S.fInqH=""; S.fResH=""; S.fJuris2=""; S.fTopics=[]; S.fNotes=""; S.fCat2=""; S.showForm=false; S.editId=null; }
-
-function doSaveEntry(){
-  var el1=document.getElementById("form-inq"), el2=document.getElementById("form-res");
-  var h1=el1?el1.innerHTML.trim():"", h2=el2?el2.innerHTML.trim():"";
-  if(!strip(h1)||!strip(h2)){ notify("Inquiry and response required",true); return; }
+// ===== KB OPS =====
+function resetForm(){S.fInqH="";S.fResH="";S.fJuris2="";S.fTopics=[];S.fNotes="";S.fCat2="";S.showForm=false;S.editId=null}
+async function doSaveEntry(){
+  var el1=document.getElementById("form-inq"),el2=document.getElementById("form-res");
+  var h1=el1?el1.innerHTML.trim():"",h2=el2?el2.innerHTML.trim():"";
+  if(!strip(h1)||!strip(h2)){notify("Inquiry and response required",true);return}
   var txt=strip(h1);
-  var entry={
-    id:S.editId||gid(), inquiry:h1, response:h2,
-    jurisdiction:S.fJuris2||detectJ(txt),
-    topics:S.fTopics.length?S.fTopics.slice():detectT(txt),
-    clientCat:S.fCat2, notes:S.fNotes.trim(),
-    date:new Date().toISOString().slice(0,10)
-  };
+  var entry={id:S.editId||gid(),inquiry:h1,response:h2,jurisdiction:S.fJuris2||detectJ(txt),topics:S.fTopics.length?S.fTopics.slice():detectT(txt),clientCat:S.fCat2,notes:S.fNotes.trim(),date:new Date().toISOString().slice(0,10)};
   if(S.editId){
-    for(var i=0;i<S.entries.length;i++){ if(S.entries[i].id===S.editId){ entry.date=S.entries[i].date; S.entries[i]=entry; break; } }
-  } else { S.entries.push(entry); }
-  saveE(); var msg=S.editId?"Updated":"Added to KB"; resetForm(); notify(msg); render();
+    for(var i=0;i<S.entries.length;i++){if(S.entries[i].id===S.editId){entry.date=S.entries[i].date;S.entries[i]=entry;break}}
+    await dbUpdate(entry);
+  }else{S.entries.push(entry);await dbInsert(entry)}
+  var msg=S.editId?"Updated":"Added to KB";resetForm();notify(msg);render();
 }
+function getF(){return S.entries.filter(function(e){if(S.fJuris&&e.jurisdiction!==S.fJuris)return false;if(S.fTopic&&(e.topics||[]).indexOf(S.fTopic)<0)return false;if(S.fCat&&e.clientCat!==S.fCat)return false;if(S.search){var lo=S.search.toLowerCase();return(strip(e.inquiry)+" "+strip(e.response)+" "+e.jurisdiction+" "+(e.clientCat||"")).toLowerCase().indexOf(lo)>=0}return true})}
+function uniqs(key){var s=new Set();S.entries.forEach(function(e){var v=key==="topics"?(e.topics||[]):([e[key]||""]);v.forEach(function(x){if(x)s.add(x)})});return Array.from(s).sort()}
 
-// Filtered
-function getF(){
-  return S.entries.filter(function(e){
-    if(S.fJuris && e.jurisdiction!==S.fJuris) return false;
-    if(S.fTopic && (e.topics||[]).indexOf(S.fTopic)<0) return false;
-    if(S.fCat && e.clientCat!==S.fCat) return false;
-    if(S.search){ var lo=S.search.toLowerCase(); return (strip(e.inquiry)+" "+strip(e.response)+" "+e.jurisdiction+" "+(e.clientCat||"")).toLowerCase().indexOf(lo)>=0; }
-    return true;
-  });
-}
-function uniqs(key){ var s=new Set(); S.entries.forEach(function(e){ var v=key==="topics"?(e.topics||[]):([e[key]||""]); v.forEach(function(x){if(x)s.add(x)}); }); return Array.from(s).sort(); }
-
-// ========= RENDER =========
+// ===== RENDER =====
 function render(){
-  var app=document.getElementById("app");
-  var apiOk=!!S.settings.apiKey.trim();
-  var h="";
-
-  // Notification
-  if(S.notif) h+='<div class="notif '+(S.notif.e?"notif-err":"notif-ok")+'">'+esc(S.notif.m)+'</div>';
-
-  // Header
-  h+='<div class="hdr"><div class="hdr-brand"><div class="hdr-logo">IP</div><div><h1>IP Inquiry Response System</h1>';
-  h+='<div class="hdr-sub">'+esc(S.settings.firmName||"Intellectual Property Practice")+'</div></div></div>';
-  h+='<div class="hdr-right"><span class="dot '+(apiOk?"dot-ok":"dot-off")+'"></span>'+(apiOk?"AI Connected":"API Key Needed")+" · "+S.entries.length+" entries</div></div>";
-
-  // Tabs
-  h+='<div class="tabs">';
-  h+='<button class="tab'+(S.tab==="generate"?" on":"")+'" data-action="tab-generate">&#10022; Draft Response</button>';
-  h+='<button class="tab'+(S.tab==="kb"?" on":"")+'" data-action="tab-kb">Knowledge Base <span class="tc">'+S.entries.length+'</span></button>';
-  h+='<button class="tab'+(S.tab==="settings"?" on":"")+'" data-action="tab-settings">Settings</button>';
-  h+='</div><div class="wrap">';
-
-  if(S.tab==="generate") h+=renderGen(apiOk);
-  else if(S.tab==="kb") h+=renderKB();
-  else h+=renderSet();
-
-  h+="</div>";
-  app.innerHTML=h;
-
-  // Restore rich text editors
-  bindRTE("gen-inquiry", S.inquiryHtml, function(v){ S.inquiryHtml=v; S.inquiry=strip(v); });
-  bindRTE("form-inq", S.fInqH, function(v){ S.fInqH=v; });
-  bindRTE("form-res", S.fResH, function(v){ S.fResH=v; });
-
-  // File input
-  var fi=document.getElementById("file-imp");
-  if(fi) fi.onchange=function(ev){ if(ev.target.files[0]) doImport(ev.target.files[0]); ev.target.value=""; };
+  var app=document.getElementById("app");var apiOk=!!S.settings.apiKey.trim();var h="";
+  if(S.notif)h+='<div class="notif '+(S.notif.e?"notif-err":"notif-ok")+'">'+esc(S.notif.m)+"</div>";
+  h+='<div class="hdr"><div class="hdr-brand"><div class="hdr-logo">IP</div><div><h1>IP Inquiry Response System</h1><div class="hdr-sub">'+esc(S.settings.firmName||"Intellectual Property Practice")+"</div></div></div>";
+  h+='<div class="hdr-right">';
+  h+='<div class="hdr-stat"><span class="dot '+(dbOk?"dot-ok":"dot-warn")+'"></span>'+(dbOk?"DB Synced":"Local Only")+"</div>";
+  h+='<div class="hdr-stat"><span class="dot '+(apiOk?"dot-ok":"dot-off")+'"></span>'+(apiOk?"AI Ready":"No API Key")+"</div>";
+  h+="<span>"+S.entries.length+" entries</span></div></div>";
+  h+='<div class="tabs"><button class="tab'+(S.tab==="generate"?" on":"")+'" data-action="tab-generate">&#10022; Draft Response</button>';
+  h+='<button class="tab'+(S.tab==="kb"?" on":"")+'" data-action="tab-kb">Knowledge Base <span class="tc">'+S.entries.length+"</span></button>";
+  h+='<button class="tab'+(S.tab==="settings"?" on":"")+'" data-action="tab-settings">Settings</button></div><div class="wrap">';
+  if(S.tab==="generate")h+=renderGen(apiOk);else if(S.tab==="kb")h+=renderKB();else h+=renderSet();
+  h+="</div>";app.innerHTML=h;
+  bindRTE("gen-inquiry",S.inquiryHtml,function(v){S.inquiryHtml=v;S.inquiry=strip(v)});
+  bindRTE("form-inq",S.fInqH,function(v){S.fInqH=v});
+  bindRTE("form-res",S.fResH,function(v){S.fResH=v});
+  var fi=document.getElementById("file-imp");if(fi)fi.onchange=function(ev){if(ev.target.files[0])doImport(ev.target.files[0]);ev.target.value=""};
 }
+function bindRTE(id,html,cb){var el=document.getElementById(id);if(!el)return;if(html&&!el.dataset.bound)el.innerHTML=html;el.dataset.bound="1";el.oninput=function(){cb(this.innerHTML)}}
 
-function bindRTE(id, html, cb){
-  var el=document.getElementById(id);
-  if(!el) return;
-  if(html && !el.dataset.bound) el.innerHTML=html;
-  el.dataset.bound="1";
-  el.oninput=function(){ cb(this.innerHTML); };
-}
-
-// Generate Tab
+// ===== GENERATE TAB =====
 function renderGen(apiOk){
-  var det=S.inquiry?detectJ(S.inquiry):"";
-  var detT=S.inquiry?detectT(S.inquiry):[];
-  var matchN=S.inquiry?S.entries.filter(function(e){return scoreRel(e,S.inquiry)>0}).length:0;
-  var h="";
-
-  if(!apiOk){
-    h+='<div class="setup-b"><h3>&#9881; Quick Setup</h3><p>Claude API key needed for AI generation. New users get $5 free credits!</p>';
-    h+='<div style="margin-top:12px"><div class="ss-i"><div class="ss-n">1</div><div class="ss-t">Go to <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a> and sign up</div></div>';
-    h+='<div class="ss-i"><div class="ss-n">2</div><div class="ss-t">Go to <b>API Keys</b> &#8594; <b>Create Key</b> &#8594; copy it</div></div>';
-    h+='<div class="ss-i"><div class="ss-n">3</div><div class="ss-t">Paste in <b>Settings</b> tab. Costs ~$0.005 per response with Haiku</div></div></div></div>';
-  }
-
-  h+='<div class="priv">&#128274; <b>Privacy:</b> Data stays in browser. Only the inquiry + matched examples sent to Claude API for response generation.</div>';
-  h+='<div class="g2"><div>';
-
-  // Inquiry input
-  h+='<div class="card"><div class="card-h"><span class="card-t">Paste Client Inquiry</span>';
-  if(S.inquiryHtml) h+='<button class="btn btn-g btn-sm" data-action="clear-inq">Clear</button>';
-  h+='</div><div style="padding:0"><div class="rte rte-lg" id="gen-inquiry" contenteditable="true" data-placeholder="Paste the client inquiry here &#8212; tables from Excel / Word / email are preserved automatically."></div></div>';
+  var det=S.inquiry?detectJ(S.inquiry):"",detT=S.inquiry?detectT(S.inquiry):[],matchN=S.inquiry?S.entries.filter(function(e){return scoreRel(e,S.inquiry)>0}).length:0;var h="";
+  if(!apiOk){h+='<div class="setup-b"><h3>&#9881; Quick Setup</h3><p>Claude API key and database needed.</p><div style="margin-top:12px"><div class="ss-i"><div class="ss-n">1</div><div class="ss-t">Set up <b>Supabase database</b> in Settings tab (for shared KB)</div></div><div class="ss-i"><div class="ss-n">2</div><div class="ss-t">Add <b>Claude API key</b> in Settings tab (for AI generation)</div></div><div class="ss-i"><div class="ss-n">3</div><div class="ss-t">Start adding past responses to Knowledge Base</div></div></div></div>'}
+  h+='<div class="priv">&#128274; <b>Privacy:</b> KB stored in your Supabase database. Only inquiry + matched examples sent to Claude API.</div>';
+  h+='<div class="g2"><div><div class="card"><div class="card-h"><span class="card-t">Paste Client Inquiry</span>';
+  if(S.inquiryHtml)h+='<button class="btn btn-g btn-sm" data-action="clear-inq">Clear</button>';
+  h+='</div><div style="padding:0"><div class="rte rte-lg" id="gen-inquiry" contenteditable="true" data-placeholder="Paste the client inquiry here &#8212; tables from Excel / Word / email are preserved."></div></div>';
   h+='<div style="padding:6px 16px 10px"><span class="rte-hint">&#128161; Paste from Outlook / Word / Excel &#8212; tables &amp; formatting preserved</span></div></div>';
-
-  // Category + notes
-  h+='<div class="card" style="margin-top:14px"><div class="card-b">';
-  h+='<div class="lbl">Client Category (for pricing)</div><div class="cats" style="margin-bottom:14px">';
-  CATEGORIES.forEach(function(c){
-    h+='<span class="cat'+(S.clientCat===c?" on":"")+'" data-action="set-cat" data-val="'+esc(c)+'" style="'+(S.clientCat===c?"background:"+CAT_COLORS[c]+";border-color:"+CAT_COLORS[c]:"")+'">'+esc(c)+"</span>";
-  });
-  h+="</div>";
-  h+='<div class="lbl">Additional Instructions (optional)</div>';
-  h+='<textarea id="add-notes" placeholder="e.g., Include rush fees, Client prefers brief responses" style="min-height:56px">'+esc(S.addNotes)+"</textarea>";
-  h+="</div></div>";
-
-  // Detected tags
-  if(S.inquiry){
-    h+='<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span style="font-size:11px;color:var(--ink3)">Detected:</span>';
-    if(det) h+='<span class="badge b-grn">'+esc(det)+"</span>";
-    detT.forEach(function(t){ h+='<span class="badge b-blu">'+esc(t)+"</span>"; });
-    if(S.clientCat) h+=catBadge(S.clientCat);
-    if(S.entries.length) h+='<span style="font-size:11px;color:var(--ink3);margin-left:8px">'+matchN+" matching</span>";
-    h+="</div>";
-  }
-
-  h+='<button class="btn btn-a btn-lg btn-bl" style="margin-top:16px" data-action="generate"'+((!S.inquiry.trim()||S.generating)?" disabled":"")+">";
-  h+=S.generating?'<span class="sp"></span> Generating...':"&#10022; Generate Response";
-  h+="</button></div>";
-
-  // Response panel
+  h+='<div class="card" style="margin-top:14px"><div class="card-b"><div class="lbl">Client Category (for pricing)</div><div class="cats" style="margin-bottom:14px">';
+  CATEGORIES.forEach(function(c){h+='<span class="cat'+(S.clientCat===c?" on":"")+'" data-action="set-cat" data-val="'+esc(c)+'" style="'+(S.clientCat===c?"background:"+CAT_COLORS[c]+";border-color:"+CAT_COLORS[c]:"")+'">'+esc(c)+"</span>"});
+  h+='</div><div class="lbl">Additional Instructions (optional)</div><textarea id="add-notes" placeholder="e.g., Include rush fees, Client prefers brief responses" style="min-height:56px">'+esc(S.addNotes)+"</textarea></div></div>";
+  if(S.inquiry){h+='<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span style="font-size:11px;color:var(--ink3)">Detected:</span>';if(det)h+='<span class="badge b-grn">'+esc(det)+"</span>";detT.forEach(function(t){h+='<span class="badge b-blu">'+esc(t)+"</span>"});if(S.clientCat)h+=catBadge(S.clientCat);if(S.entries.length)h+='<span style="font-size:11px;color:var(--ink3);margin-left:8px">'+matchN+" matching</span>";h+="</div>"}
+  h+='<button class="btn btn-a btn-lg btn-bl" style="margin-top:16px" data-action="generate"'+((!S.inquiry.trim()||S.generating)?" disabled":"")+">"+( S.generating?'<span class="sp"></span> Generating...':"&#10022; Generate Response")+"</button></div>";
   h+='<div><div class="card"><div class="card-h"><span class="card-t">Generated Response</span>';
-  if(S.response) h+='<div style="display:flex;gap:6px"><button class="btn btn-p btn-sm" data-action="copy">'+(S.copied?"&#10003; Copied!":"&#10697; Copy")+'</button><button class="btn btn-s btn-sm" data-action="save-to-kb">Save to KB</button></div>';
+  if(S.response)h+='<div style="display:flex;gap:6px"><button class="btn btn-p btn-sm" data-action="copy">'+(S.copied?"&#10003; Copied!":"&#10697; Copy")+'</button><button class="btn btn-s btn-sm" data-action="save-to-kb">Save to KB</button></div>';
   h+='</div><div class="card-b" style="min-height:300px;max-height:600px;overflow-y:auto">';
-
-  if(S.genErr) h+='<div style="padding:14px;background:var(--errb);border-radius:var(--rs);color:var(--err);font-size:13px"><b>Error:</b> '+esc(S.genErr)+"</div>";
-  if(S.generating && !S.response) h+='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:260px;gap:14px;color:var(--ink3)"><div class="sp-d"></div><p style="font-size:13px;font-weight:500">Analyzing &amp; generating...</p><p style="font-size:11px">15-30 seconds</p></div>';
-  if(!S.response && !S.generating && !S.genErr) h+='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:260px;color:var(--ink4)"><div style="font-size:48px;margin-bottom:12px;opacity:.4">&#10022;</div><p style="font-size:14px;font-weight:500;color:var(--ink3)">Response will appear here</p><p style="font-size:12px;max-width:300px;text-align:center;margin-top:4px">Paste inquiry, select category, click Generate.</p></div>';
-  if(S.response) h+='<div class="rd">'+renderFmt(S.response)+"</div>";
-
-  h+="</div></div></div></div>";
-  return h;
+  if(S.genErr)h+='<div style="padding:14px;background:var(--errb);border-radius:var(--rs);color:var(--err);font-size:13px"><b>Error:</b> '+esc(S.genErr)+"</div>";
+  if(S.generating&&!S.response)h+='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:260px;gap:14px;color:var(--ink3)"><div class="sp-d"></div><p style="font-size:13px;font-weight:500">Analyzing &amp; generating...</p><p style="font-size:11px">15-30 seconds</p></div>';
+  if(!S.response&&!S.generating&&!S.genErr)h+='<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:260px;color:var(--ink4)"><div style="font-size:48px;margin-bottom:12px;opacity:.4">&#10022;</div><p style="font-size:14px;font-weight:500;color:var(--ink3)">Response will appear here</p><p style="font-size:12px;max-width:300px;text-align:center;margin-top:4px">Paste inquiry, select category, click Generate.</p></div>';
+  if(S.response)h+='<div class="rd">'+renderFmt(S.response)+"</div>";
+  h+="</div></div></div></div>";return h;
 }
 
-// KB Tab
+// ===== KB TAB =====
 function renderKB(){
-  var juris=uniqs("jurisdiction"), topics=uniqs("topics"), cats=uniqs("clientCat");
-  var filtered=getF();
-  var h="";
-
-  // Filters
-  h+='<div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;align-items:center">';
-  h+='<input type="text" id="kb-search" placeholder="Search..." value="'+esc(S.search)+'" style="flex:1;min-width:180px">';
-  h+='<select id="kb-fjuris" style="width:auto;min-width:130px"><option value="">All Jurisdictions</option>';
-  juris.forEach(function(j){ h+='<option value="'+esc(j)+'"'+(S.fJuris===j?" selected":"")+">"+esc(j)+"</option>"; });
-  h+='</select><select id="kb-ftopic" style="width:auto;min-width:130px"><option value="">All Topics</option>';
-  topics.forEach(function(t){ h+='<option value="'+esc(t)+'"'+(S.fTopic===t?" selected":"")+">"+esc(t)+"</option>"; });
-  h+='</select><select id="kb-fcat" style="width:auto;min-width:130px"><option value="">All Categories</option>';
-  cats.forEach(function(c){ h+='<option value="'+esc(c)+'"'+(S.fCat===c?" selected":"")+">"+esc(c)+"</option>"; });
-  h+="</select></div>";
-
-  // Buttons
-  h+='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
-  h+='<button class="btn btn-a btn-sm" data-action="show-form">+ Add Entry</button>';
-  h+='<button class="btn btn-s btn-sm" data-action="import">&#128229; Import Excel</button>';
-  h+='<button class="btn btn-s btn-sm" data-action="export"'+(S.entries.length?"":' disabled')+'>&#128228; Export</button>';
-  h+='<button class="btn btn-g btn-sm" data-action="template">&#128196; Template</button>';
-  h+='<input type="file" id="file-imp" accept=".xlsx,.xls,.csv" style="display:none">';
-  h+="</div>";
-
+  var juris=uniqs("jurisdiction"),topics=uniqs("topics"),cats=uniqs("clientCat"),filtered=getF();var h="";
+  if(dbOk)h+='<div class="db-ok" style="margin-bottom:16px">&#9989; <b>Shared Database Active</b> &#8212; All team members see the same Knowledge Base. <button class="btn btn-s btn-sm" style="margin-left:auto" data-action="refresh-kb">&#8635; Refresh</button></div>';
+  else h+='<div class="db-warn" style="margin-bottom:16px">&#9888; <b>Local Mode</b> &#8212; KB stored in this browser only. Connect Supabase in Settings for team sync.</div>';
+  h+='<div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;align-items:center"><input type="text" id="kb-search" placeholder="Search..." value="'+esc(S.search)+'" style="flex:1;min-width:180px">';
+  h+='<select id="kb-fjuris" style="width:auto;min-width:130px"><option value="">All Jurisdictions</option>';juris.forEach(function(j){h+='<option value="'+esc(j)+'"'+(S.fJuris===j?" selected":"")+">"+esc(j)+"</option>"});
+  h+='</select><select id="kb-ftopic" style="width:auto;min-width:130px"><option value="">All Topics</option>';topics.forEach(function(t){h+='<option value="'+esc(t)+'"'+(S.fTopic===t?" selected":"")+">"+esc(t)+"</option>"});
+  h+='</select><select id="kb-fcat" style="width:auto;min-width:130px"><option value="">All Categories</option>';cats.forEach(function(c){h+='<option value="'+esc(c)+'"'+(S.fCat===c?" selected":"")+">"+esc(c)+"</option>"});h+="</select></div>";
+  h+='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap"><button class="btn btn-a btn-sm" data-action="show-form">+ Add Entry</button>';
+  h+='<button class="btn btn-s btn-sm" data-action="import">&#128229; Import Excel</button><button class="btn btn-s btn-sm" data-action="export"'+(S.entries.length?"":' disabled')+'>&#128228; Export</button>';
+  h+='<button class="btn btn-g btn-sm" data-action="template">&#128196; Template</button><input type="file" id="file-imp" accept=".xlsx,.xls,.csv" style="display:none"></div>';
   h+='<p style="font-size:12px;color:var(--ink3);margin-bottom:14px">Showing '+filtered.length+" of "+S.entries.length;
-  if(S.fJuris||S.fTopic||S.fCat||S.search) h+=' <span data-action="clear-filters" style="margin-left:8px;color:var(--acc);cursor:pointer;font-weight:600">Clear filters</span>';
-  h+="</p>";
-
-  // Form
-  if(S.showForm) h+=renderForm();
-
-  // Entries
-  if(!filtered.length && !S.showForm){
-    h+='<div style="text-align:center;padding:60px;color:var(--ink3)"><div style="font-size:48px;margin-bottom:12px;opacity:.3">&#128194;</div>';
-    h+="<p>"+(S.entries.length?"No matches.":"No entries yet. Add or import!")+"</p></div>";
-  }
-
-  filtered.forEach(function(entry){
-    var pt=strip(entry.inquiry).slice(0,160);
-    h+='<div class="ei"><div class="ei-h" data-action="toggle-entry" data-id="'+entry.id+'">';
-    h+='<div style="flex:1;min-width:0"><div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:4px">';
-    if(entry.jurisdiction) h+='<span class="badge b-grn">'+esc(entry.jurisdiction)+"</span>";
-    (entry.topics||[]).slice(0,2).forEach(function(t){ h+='<span class="badge b-blu">'+esc(t)+"</span>"; });
-    if(entry.clientCat) h+=catBadge(entry.clientCat);
-    h+='<span style="font-size:10px;color:var(--ink4)">'+esc(entry.date||"")+"</span>";
-    h+='</div><div class="ei-pre">'+esc(pt)+"</div></div>";
-    h+='<span class="ei-arr'+(S.expId===entry.id?" open":"")+'">&#9662;</span></div>';
-
-    if(S.expId===entry.id){
-      h+='<div class="ei-det"><div class="g2" style="gap:16px">';
-      h+='<div><div class="lbl">Inquiry</div><div class="ecb">'+entry.inquiry+"</div></div>";
-      h+='<div><div class="lbl">Response</div><div class="ecb">'+entry.response+"</div></div>";
-      h+='</div><div style="margin-top:14px;display:flex;gap:8px">';
-      h+='<button class="btn btn-s btn-sm" data-action="edit-entry" data-id="'+entry.id+'">Edit</button>';
-      h+='<button class="btn btn-d btn-sm" data-action="del-entry" data-id="'+entry.id+'">Delete</button>';
-      h+="</div></div>";
-    }
-    h+="</div>";
-  });
-
-  return h;
+  if(S.fJuris||S.fTopic||S.fCat||S.search)h+=' <span data-action="clear-filters" style="margin-left:8px;color:var(--acc);cursor:pointer;font-weight:600">Clear filters</span>';h+="</p>";
+  if(S.showForm)h+=renderForm();
+  if(!filtered.length&&!S.showForm){h+='<div style="text-align:center;padding:60px;color:var(--ink3)"><div style="font-size:48px;margin-bottom:12px;opacity:.3">&#128194;</div><p>'+(S.entries.length?"No matches.":"No entries yet. Add or import!")+"</p></div>"}
+  filtered.forEach(function(entry){var pt=strip(entry.inquiry).slice(0,160);h+='<div class="ei"><div class="ei-h" data-action="toggle-entry" data-id="'+entry.id+'"><div style="flex:1;min-width:0"><div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:4px">';if(entry.jurisdiction)h+='<span class="badge b-grn">'+esc(entry.jurisdiction)+"</span>";(entry.topics||[]).slice(0,2).forEach(function(t){h+='<span class="badge b-blu">'+esc(t)+"</span>"});if(entry.clientCat)h+=catBadge(entry.clientCat);h+='<span style="font-size:10px;color:var(--ink4)">'+esc(entry.date||"")+"</span></div><div class='ei-pre'>"+esc(pt)+"</div></div>";h+='<span class="ei-arr'+(S.expId===entry.id?" open":"")+'">&#9662;</span></div>';if(S.expId===entry.id){h+='<div class="ei-det"><div class="g2" style="gap:16px"><div><div class="lbl">Inquiry</div><div class="ecb">'+entry.inquiry+"</div></div><div><div class='lbl'>Response</div><div class='ecb'>"+entry.response+"</div></div></div><div style='margin-top:14px;display:flex;gap:8px'><button class='btn btn-s btn-sm' data-action='edit-entry' data-id='"+entry.id+"'>Edit</button><button class='btn btn-d btn-sm' data-action='del-entry' data-id='"+entry.id+"'>Delete</button></div></div>"}h+="</div>"});return h;
 }
-
 function renderForm(){
-  var h='<div class="card form-hl" style="margin-bottom:20px"><div class="card-h"><span class="card-t">'+(S.editId?"Edit Entry":"Add New Entry")+'</span>';
-  h+='<button class="btn btn-g btn-sm" data-action="cancel-form">&#10005; Cancel</button></div><div class="card-b">';
-
-  h+='<div class="g2" style="gap:16px"><div>';
-  h+='<div class="lbl">Client Inquiry * <span style="font-weight:400;text-transform:none;font-style:italic">(paste with tables)</span></div>';
-  h+='<div class="rte" id="form-inq" contenteditable="true" data-placeholder="Paste inquiry here &#8212; tables from Excel/Word preserved..."></div>';
-  h+='<div class="rte-hint">&#128161; Paste from Outlook/Word/Excel &#8212; tables kept intact</div></div><div>';
-  h+='<div class="lbl">Our Response * <span style="font-weight:400;text-transform:none;font-style:italic">(paste with tables)</span></div>';
-  h+='<div class="rte" id="form-res" contenteditable="true" data-placeholder="Paste response &#8212; fee tables &amp; formatting preserved..."></div>';
-  h+='<div class="rte-hint">&#128161; Fee tables from Excel/Word display correctly</div></div></div>';
-
-  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px"><div>';
-  h+='<div class="lbl">Jurisdiction</div><select id="form-juris"><option value="">Auto-detect</option>';
-  JURISDICTIONS.forEach(function(j){ h+='<option value="'+esc(j)+'"'+(S.fJuris2===j?" selected":"")+">"+esc(j)+"</option>"; });
-  h+='</select></div><div><div class="lbl">Client Category</div><div class="cats">';
-  CATEGORIES.forEach(function(c){
-    h+='<span class="cat'+(S.fCat2===c?" on":"")+'" data-action="form-cat" data-val="'+esc(c)+'" style="'+(S.fCat2===c?"background:"+CAT_COLORS[c]+";border-color:"+CAT_COLORS[c]:"")+'">'+esc(c)+"</span>";
-  });
-  h+="</div></div></div>";
-
-  h+='<div style="margin-top:16px"><div class="lbl">Topics</div><div style="display:flex;gap:4px;flex-wrap:wrap">';
-  TOPICS.forEach(function(t){
-    h+='<span class="pill'+(S.fTopics.indexOf(t)>=0?" on":"")+'" data-action="form-topic" data-val="'+esc(t)+'">'+esc(t)+"</span>";
-  });
-  h+="</div></div>";
-
+  var h='<div class="card form-hl" style="margin-bottom:20px"><div class="card-h"><span class="card-t">'+(S.editId?"Edit Entry":"Add New Entry")+'</span><button class="btn btn-g btn-sm" data-action="cancel-form">&#10005; Cancel</button></div><div class="card-b">';
+  h+='<div class="g2" style="gap:16px"><div><div class="lbl">Client Inquiry * <span style="font-weight:400;text-transform:none;font-style:italic">(paste with tables)</span></div><div class="rte" id="form-inq" contenteditable="true" data-placeholder="Paste inquiry &#8212; tables preserved..."></div><div class="rte-hint">&#128161; Paste from Outlook/Word/Excel</div></div><div><div class="lbl">Our Response * <span style="font-weight:400;text-transform:none;font-style:italic">(paste with tables)</span></div><div class="rte" id="form-res" contenteditable="true" data-placeholder="Paste response &#8212; fee tables preserved..."></div><div class="rte-hint">&#128161; Fee tables from Excel/Word preserved</div></div></div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px"><div><div class="lbl">Jurisdiction</div><select id="form-juris"><option value="">Auto-detect</option>';JURISDICTIONS.forEach(function(j){h+='<option value="'+esc(j)+'"'+(S.fJuris2===j?" selected":"")+">"+esc(j)+"</option>"});
+  h+='</select></div><div><div class="lbl">Client Category</div><div class="cats">';CATEGORIES.forEach(function(c){h+='<span class="cat'+(S.fCat2===c?" on":"")+'" data-action="form-cat" data-val="'+esc(c)+'" style="'+(S.fCat2===c?"background:"+CAT_COLORS[c]+";border-color:"+CAT_COLORS[c]:"")+'">'+esc(c)+"</span>"});h+="</div></div></div>";
+  h+='<div style="margin-top:16px"><div class="lbl">Topics</div><div style="display:flex;gap:4px;flex-wrap:wrap">';TOPICS.forEach(function(t){h+='<span class="pill'+(S.fTopics.indexOf(t)>=0?" on":"")+'" data-action="form-topic" data-val="'+esc(t)+'">'+esc(t)+"</span>"});h+="</div></div>";
   h+='<div style="margin-top:16px"><div class="lbl">Notes</div><input type="text" id="form-notes" placeholder="Optional..." value="'+esc(S.fNotes)+'"></div>';
-  h+='<div style="margin-top:18px;display:flex;gap:8px">';
-  h+='<button class="btn btn-a" data-action="save-entry">'+(S.editId?"Update":"Add to KB")+"</button>";
-  h+='<button class="btn btn-s" data-action="cancel-form">Cancel</button></div></div></div>';
-  return h;
+  h+='<div style="margin-top:18px;display:flex;gap:8px"><button class="btn btn-a" data-action="save-entry">'+(S.editId?"Update":"Add to KB")+'</button><button class="btn btn-s" data-action="cancel-form">Cancel</button></div></div></div>';return h;
 }
 
-// Settings Tab
+// ===== SETTINGS TAB =====
 function renderSet(){
-  var juris=uniqs("jurisdiction"), cats=uniqs("clientCat");
+  var juris=uniqs("jurisdiction"),cats=uniqs("clientCat");
   var h='<div style="max-width:680px">';
-
+  // Database
+  h+='<div class="card" style="margin-bottom:20px"><div class="card-h"><span class="card-t">&#128450; Shared Database (Supabase)</span></div><div class="card-b">';
+  if(dbOk)h+='<div class="db-ok" style="margin-bottom:16px">&#9989; <b>Connected</b> &#8212; Knowledge Base is shared with all team members</div>';
+  else if(S.settings.sbUrl)h+='<div class="db-off" style="margin-bottom:16px">&#10060; <b>Not connected</b> &#8212; Check URL and key below</div>';
+  else h+='<div class="db-warn" style="margin-bottom:16px">&#9888; <b>Not configured</b> &#8212; KB is stored locally in this browser only</div>';
+  h+='<div class="ss-i"><div class="ss-n">1</div><div class="ss-t">Go to <a href="https://supabase.com" target="_blank">supabase.com</a> &#8594; Create free account &#8594; New Project</div></div>';
+  h+='<div class="ss-i"><div class="ss-n">2</div><div class="ss-t">In SQL Editor, run the setup SQL (see guide)</div></div>';
+  h+='<div class="ss-i"><div class="ss-n">3</div><div class="ss-t">Go to Project Settings &#8594; API &#8594; Copy URL and anon key</div></div>';
+  h+='<div style="margin-top:16px"><div class="lbl">Supabase Project URL</div><input type="text" id="sb-url" placeholder="https://your-project.supabase.co" value="'+esc(S.settings.sbUrl)+'"></div>';
+  h+='<div style="margin-top:12px"><div class="lbl">Supabase Anon Key</div><input type="password" id="sb-key" placeholder="eyJhbGciOiJIUzI1NiIs..." value="'+esc(S.settings.sbKey)+'"></div>';
+  h+='<div style="margin-top:14px"><button class="btn btn-ok" data-action="connect-db">&#9889; Connect Database</button></div>';
+  h+='<p style="font-size:11px;color:var(--ink3);margin-top:8px">Free tier: 500MB database, unlimited API calls. Same URL + key for all team members.</p></div></div>';
   // API key
   h+='<div class="card" style="margin-bottom:20px"><div class="card-h"><span class="card-t">&#128273; Claude API Key</span></div><div class="card-b">';
-  h+='<div style="margin-bottom:16px"><div class="ss-i"><div class="ss-n">1</div><div class="ss-t">Go to <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a> and sign up</div></div>';
-  h+='<div class="ss-i"><div class="ss-n">2</div><div class="ss-t">Go to <b>API Keys</b> &#8594; <b>Create Key</b> &#8594; copy it</div></div>';
-  h+='<div class="ss-i"><div class="ss-n">3</div><div class="ss-t">Paste below. <b>$5 free credits for new users. ~$0.005/response with Haiku</b></div></div></div>';
-  h+='<div class="lbl">API Key</div><div style="display:flex;gap:8px"><input type="'+(S.showKey?"text":"password")+'" id="api-key" placeholder="Paste key..." value="'+esc(S.settings.apiKey)+'" style="flex:1">';
-  h+='<button class="btn btn-s btn-sm" data-action="toggle-key">'+(S.showKey?"&#128274; Hide":"&#128065; Show")+"</button></div>";
-  h+='<p style="font-size:11px;color:var(--ink3);margin-top:8px">&#128274; Stored only in this browser.</p>';
-  h+='<div style="margin-top:16px"><div class="lbl">AI Model</div>';
-  h+='<select id="set-model" style="width:auto;min-width:280px">';
-  var models=[
-    ["claude-haiku-4-5-20251001","Claude Haiku 4.5 — fastest, cheapest (~$0.005/response)"],
-    ["claude-sonnet-4-5-20250929","Claude Sonnet 4.5 — best balance (~$0.03/response)"],
-    ["claude-opus-4-5-20251101","Claude Opus 4.5 — most capable (~$0.05/response)"]
-  ];
-  models.forEach(function(m){ h+='<option value="'+m[0]+'"'+(S.settings.model===m[0]?" selected":"")+">"+m[1]+"</option>"; });
-  h+='</select>';
-  h+='<p style="font-size:11px;color:var(--ink3);margin-top:6px">Haiku is recommended &#8212; fast, accurate, and extremely cheap. Switch to Sonnet for complex jurisdictions. <a href="https://console.anthropic.com/" target="_blank" style="color:var(--acc)">Manage billing</a></p>';
-  h+='</div></div></div>';
-
+  h+='<div class="ss-i"><div class="ss-n">1</div><div class="ss-t">Go to <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a></div></div>';
+  h+='<div class="ss-i"><div class="ss-n">2</div><div class="ss-t"><b>API Keys</b> &#8594; <b>Create Key</b> &#8594; copy</div></div>';
+  h+='<div class="lbl" style="margin-top:12px">API Key</div><div style="display:flex;gap:8px"><input type="'+(S.showKey?"text":"password")+'" id="api-key" placeholder="sk-ant-..." value="'+esc(S.settings.apiKey)+'" style="flex:1"><button class="btn btn-s btn-sm" data-action="toggle-key">'+(S.showKey?"&#128274;":"&#128065;")+"</button></div>";
+  h+='<div style="margin-top:12px"><div class="lbl">AI Model</div><select id="set-model" style="width:auto;min-width:280px">';
+  [["claude-haiku-4-5-20251001","Claude Haiku 4.5 &#8212; fastest, ~$0.005/response"],["claude-sonnet-4-5-20250929","Claude Sonnet 4.5 &#8212; balanced, ~$0.03/response"],["claude-opus-4-5-20251101","Claude Opus 4.5 &#8212; most capable, ~$0.05/response"]].forEach(function(m){h+='<option value="'+m[0]+'"'+(S.settings.model===m[0]?" selected":"")+">"+m[1]+"</option>"});
+  h+="</select></div></div></div>";
   // Firm
   h+='<div class="card" style="margin-bottom:20px"><div class="card-h"><span class="card-t">Firm Settings</span></div><div class="card-b">';
   h+='<div style="margin-bottom:16px"><div class="lbl">Firm Name</div><input type="text" id="set-firm" placeholder="e.g., Smith &amp; Partners IP" value="'+esc(S.settings.firmName)+'"></div>';
   h+='<div style="margin-bottom:16px"><div class="lbl">Tone &amp; Style</div><textarea id="set-tone" placeholder="e.g., Formal British English. Best regards." style="min-height:80px">'+esc(S.settings.toneNotes)+"</textarea></div>";
   h+='<div style="margin-bottom:16px"><div class="lbl">Default Greeting</div><input type="text" id="set-greet" value="'+esc(S.settings.greeting)+'"></div>';
   h+='<button class="btn btn-a" data-action="save-settings">Save Settings</button></div></div>';
-
-  // Team sharing
-  h+='<div class="card" style="margin-bottom:20px"><div class="card-h"><span class="card-t">Team Sharing (OneDrive)</span></div><div class="card-b">';
-  h+='<p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px"><b>Workflow:</b> One person maintains the master Excel on OneDrive. After updates, export. Others re-import &#8212; duplicates auto-skipped.</p>';
-  h+='<p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:16px">Excel includes <b>Client Category</b> column &#8212; pricing tiers preserved across team.</p>';
-  h+='<div style="display:flex;gap:8px"><button class="btn btn-s btn-sm" data-action="export"'+(S.entries.length?"":' disabled')+'>&#128228; Export</button>';
-  h+='<button class="btn btn-g btn-sm" data-action="template">&#128196; Template</button></div></div></div>';
-
   // Stats
   h+='<div class="card"><div class="card-h"><span class="card-t">Stats</span></div><div class="card-b">';
-  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px">';
-  h+='<div class="stat"><div class="stat-n">'+S.entries.length+'</div><div class="stat-l">Entries</div></div>';
-  h+='<div class="stat"><div class="stat-n">'+juris.length+'</div><div class="stat-l">Jurisdictions</div></div>';
-  h+='<div class="stat"><div class="stat-n">'+uniqs("topics").length+'</div><div class="stat-l">Topics</div></div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px"><div class="stat"><div class="stat-n">'+S.entries.length+'</div><div class="stat-l">Entries</div></div>';
+  h+='<div class="stat"><div class="stat-n">'+juris.length+'</div><div class="stat-l">Jurisdictions</div></div><div class="stat"><div class="stat-n">'+uniqs("topics").length+'</div><div class="stat-l">Topics</div></div>';
   h+='<div class="stat"><div class="stat-n">'+cats.length+'</div><div class="stat-l">Categories</div></div></div>';
-
-  if(cats.length){
-    h+='<div class="lbl" style="margin-bottom:8px">By Category</div><div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:16px">';
-    cats.forEach(function(c){ var n=S.entries.filter(function(e){return e.clientCat===c}).length; h+=catBadge(c+" ("+n+")"); });
-    h+="</div>";
-  }
-
-  h+='<div style="padding-top:18px;border-top:1px solid var(--bdrl)"><div class="lbl" style="color:var(--err);margin-bottom:8px">Danger Zone</div>';
-  h+='<button class="btn btn-d btn-sm" data-action="clear-all">Clear All Entries</button></div></div></div></div>';
+  if(cats.length){h+='<div class="lbl" style="margin-bottom:8px">By Category</div><div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:16px">';cats.forEach(function(c){var n=S.entries.filter(function(e){return e.clientCat===c}).length;h+=catBadge(c+" ("+n+")")});h+="</div>"}
+  h+='<div style="padding-top:18px;border-top:1px solid var(--bdrl)"><div class="lbl" style="color:var(--err);margin-bottom:8px">Danger Zone</div><button class="btn btn-d btn-sm" data-action="clear-all">Clear All Entries</button></div></div></div></div>';
   return h;
 }
 
-// ========= EVENT DELEGATION =========
-document.addEventListener("click", function(ev){
-  var el=ev.target.closest("[data-action]");
-  if(!el) return;
-  var action=el.dataset.action;
-  var val=el.dataset.val||"";
-  var id=el.dataset.id||"";
-
+// ===== EVENTS =====
+document.addEventListener("click",function(ev){
+  var el=ev.target.closest("[data-action]");if(!el)return;
+  var action=el.dataset.action,val=el.dataset.val||"",id=el.dataset.id||"";
   switch(action){
-    case "tab-generate": S.tab="generate"; render(); break;
-    case "tab-kb": S.tab="kb"; render(); break;
-    case "tab-settings": S.tab="settings"; render(); break;
-    case "clear-inq": S.inquiry=""; S.inquiryHtml=""; S.response=""; S.genErr=""; render(); break;
-    case "set-cat": S.clientCat=(S.clientCat===val?"":val); render(); break;
-    case "generate": doGenerate(); break;
-    case "copy": doCopy(); break;
+    case "tab-generate":S.tab="generate";render();break;
+    case "tab-kb":S.tab="kb";render();break;
+    case "tab-settings":S.tab="settings";render();break;
+    case "clear-inq":S.inquiry="";S.inquiryHtml="";S.response="";S.genErr="";render();break;
+    case "set-cat":S.clientCat=(S.clientCat===val?"":val);render();break;
+    case "generate":doGenerate();break;
+    case "copy":doCopy();break;
     case "save-to-kb":
-      if(!S.inquiryHtml||!S.response) break;
-      S.fInqH=S.inquiryHtml; S.fResH=renderFmt(S.response);
-      S.fJuris2=detectJ(S.inquiry); S.fTopics=detectT(S.inquiry); S.fCat2=S.clientCat;
-      S.showForm=true; S.tab="kb"; render(); window.scrollTo(0,0); break;
-    case "show-form": resetForm(); S.showForm=true; render(); window.scrollTo(0,0); break;
-    case "import": var fi=document.getElementById("file-imp"); if(fi) fi.click(); break;
-    case "export": doExport(); break;
-    case "template": doTemplate(); break;
-    case "clear-filters": S.search=""; S.fJuris=""; S.fTopic=""; S.fCat=""; render(); break;
-    case "toggle-entry": S.expId=(S.expId===id?null:id); render(); break;
+      if(!S.inquiryHtml||!S.response)break;
+      S.fInqH=S.inquiryHtml;S.fResH=renderFmt(S.response);S.fJuris2=detectJ(S.inquiry);S.fTopics=detectT(S.inquiry);S.fCat2=S.clientCat;S.showForm=true;S.tab="kb";render();window.scrollTo(0,0);break;
+    case "show-form":resetForm();S.showForm=true;render();window.scrollTo(0,0);break;
+    case "import":var fi=document.getElementById("file-imp");if(fi)fi.click();break;
+    case "export":doExport();break;
+    case "template":doTemplate();break;
+    case "clear-filters":S.search="";S.fJuris="";S.fTopic="";S.fCat="";render();break;
+    case "toggle-entry":S.expId=(S.expId===id?null:id);render();break;
     case "edit-entry":
-      var entry=S.entries.find(function(e){return e.id===id});
-      if(!entry) break;
-      S.fInqH=entry.inquiry; S.fResH=entry.response; S.fJuris2=entry.jurisdiction||"";
-      S.fTopics=(entry.topics||[]).slice(); S.fNotes=entry.notes||""; S.fCat2=entry.clientCat||"";
-      S.editId=id; S.showForm=true; render(); window.scrollTo(0,0); break;
+      var entry=S.entries.find(function(e){return e.id===id});if(!entry)break;
+      S.fInqH=entry.inquiry;S.fResH=entry.response;S.fJuris2=entry.jurisdiction||"";
+      S.fTopics=(entry.topics||[]).slice();S.fNotes=entry.notes||"";S.fCat2=entry.clientCat||"";
+      S.editId=id;S.showForm=true;render();window.scrollTo(0,0);break;
     case "del-entry":
-      if(!confirm("Delete this entry?")) break;
-      S.entries=S.entries.filter(function(e){return e.id!==id}); saveE(); notify("Deleted"); render(); break;
-    case "cancel-form": resetForm(); render(); break;
-    case "form-cat": S.fCat2=(S.fCat2===val?"":val); render(); break;
-    case "form-topic":
-      var idx=S.fTopics.indexOf(val);
-      if(idx>=0) S.fTopics.splice(idx,1); else S.fTopics.push(val);
-      render(); break;
+      if(!confirm("Delete this entry?"))break;
+      S.entries=S.entries.filter(function(e){return e.id!==id});dbDelete(id);notify("Deleted");render();break;
+    case "cancel-form":resetForm();render();break;
+    case "form-cat":S.fCat2=(S.fCat2===val?"":val);render();break;
+    case "form-topic":var idx=S.fTopics.indexOf(val);if(idx>=0)S.fTopics.splice(idx,1);else S.fTopics.push(val);render();break;
     case "save-entry":
-      var nEl=document.getElementById("form-notes"); if(nEl) S.fNotes=nEl.value;
-      var jEl=document.getElementById("form-juris"); if(jEl) S.fJuris2=jEl.value;
-      doSaveEntry(); break;
+      var nEl=document.getElementById("form-notes");if(nEl)S.fNotes=nEl.value;
+      var jEl=document.getElementById("form-juris");if(jEl)S.fJuris2=jEl.value;
+      doSaveEntry();break;
     case "save-settings":
-      var k=document.getElementById("api-key"); if(k) S.settings.apiKey=k.value;
-      var f=document.getElementById("set-firm"); if(f) S.settings.firmName=f.value;
-      var t=document.getElementById("set-tone"); if(t) S.settings.toneNotes=t.value;
-      var g=document.getElementById("set-greet"); if(g) S.settings.greeting=g.value;
-      var mo=document.getElementById("set-model"); if(mo) S.settings.model=mo.value;
-      saveS(); notify("Settings saved"); render(); break;
-    case "toggle-key": S.showKey=!S.showKey; render(); break;
+      var k=document.getElementById("api-key");if(k)S.settings.apiKey=k.value;
+      var f=document.getElementById("set-firm");if(f)S.settings.firmName=f.value;
+      var t=document.getElementById("set-tone");if(t)S.settings.toneNotes=t.value;
+      var g=document.getElementById("set-greet");if(g)S.settings.greeting=g.value;
+      var mo=document.getElementById("set-model");if(mo)S.settings.model=mo.value;
+      saveS();notify("Settings saved");render();break;
+    case "toggle-key":S.showKey=!S.showKey;render();break;
     case "clear-all":
-      if(!confirm("Delete ALL entries? Cannot undo.")) break;
-      S.entries=[]; saveE(); notify("All cleared"); render(); break;
+      if(!confirm("Delete ALL entries? Cannot undo."))break;
+      dbClearAll().then(function(){notify("All cleared");render()});break;
+    case "connect-db":
+      var u=document.getElementById("sb-url"),kk=document.getElementById("sb-key");
+      if(u)S.settings.sbUrl=u.value.trim();if(kk)S.settings.sbKey=kk.value.trim();
+      saveS();initDB();
+      if(db){testConnection().then(function(ok){if(ok){dbOk=true;notify("Database connected! Loading entries...");loadEntries().then(function(){render()})}else{dbOk=false;notify("Connection failed. Check URL and key.",true);render()}})}
+      else{notify("Enter Supabase URL and key",true);render()}
+      break;
+    case "refresh-kb":
+      loadEntries().then(function(){notify("KB refreshed from database");render()});break;
   }
 });
+document.addEventListener("input",function(ev){var id=ev.target.id;if(id==="kb-search"){S.search=ev.target.value;render()}else if(id==="add-notes"){S.addNotes=ev.target.value}});
+document.addEventListener("change",function(ev){var id=ev.target.id;if(id==="kb-fjuris"){S.fJuris=ev.target.value;render()}else if(id==="kb-ftopic"){S.fTopic=ev.target.value;render()}else if(id==="kb-fcat"){S.fCat=ev.target.value;render()}});
 
-// Input events for filters & settings fields
-document.addEventListener("input", function(ev){
-  var id=ev.target.id;
-  if(id==="kb-search"){ S.search=ev.target.value; render(); }
-  else if(id==="add-notes"){ S.addNotes=ev.target.value; }
-  else if(id==="api-key"){ S.settings.apiKey=ev.target.value; }
-});
-document.addEventListener("change", function(ev){
-  var id=ev.target.id;
-  if(id==="kb-fjuris"){ S.fJuris=ev.target.value; render(); }
-  else if(id==="kb-ftopic"){ S.fTopic=ev.target.value; render(); }
-  else if(id==="kb-fcat"){ S.fCat=ev.target.value; render(); }
-});
-
-// Init
-load();
-render();
+// ===== INIT =====
+loadSettings();
+initDB();
+if(db){
+  testConnection().then(function(ok){
+    if(ok){dbOk=true;loadEntries().then(function(){render()})}
+    else{dbOk=false;try{var e=localStorage.getItem("ip-kb-entries");if(e)S.entries=JSON.parse(e)}catch(x){}render()}
+  });
+} else {
+  try{var e=localStorage.getItem("ip-kb-entries");if(e)S.entries=JSON.parse(e)}catch(x){}
+  render();
+}
 
 })();
 </script>
